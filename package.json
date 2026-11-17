@@ -5,7 +5,9 @@
   "private": true,
   "packageManager": "pnpm@9.15.9",
   "scripts": {
-    "test": "PYTHONPATH=src python3 -m unittest discover -s tests -t ."
+    "test": "PYTHONPATH=src python3 -m unittest discover -s tests -t .",
+    "sync": "PYTHONPATH=src python3 -m ced_taker sync",
+    "explain": "PYTHONPATH=src python3 -m ced_taker explain"
   },
   "license": "ISC"
 }
