@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local data (personal paths, logs, settings)
+local/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Editor settings
+.vscode/
+.idea/
+
+# Python cache
+__pycache__/
+*.pyc
