@@ -49,6 +49,21 @@
 - 사람이 읽는 노트 쓰기.
 - 문서를 보내는 앱 쪽의 변경(목차 파일명 분리 등). 요청문은 만들었지만 아직 반영되지 않았다.
 
+## 예시
+
+[examples/](examples/)에서 결과를 바로 볼 수 있다. 데모 볼트(`demo-vault/`)의 문서로 만든 것이다.
+
+| 파일 | 무엇인가 |
+|---|---|
+| `demo-vault/CED/` | 송신하는 쪽이 보낸 문서의 예. 상태 파일의 해시와 함께 있다. |
+| `demo.db` | 데모 볼트에서 만든 DB. 한 파일이고 열어 볼 수 있다. |
+| `schema.sql` | DB의 표 구조. 코드에서 만든 DB에서 읽어 낸 것이다. |
+| `sample.diff`, `sample-description.txt` | 입력의 예. 락 파일의 변경도 들어 있다. |
+| `explain-example.md` | 위 입력에서 만든 해설. 락 파일의 단어는 빠지고, "balance를"처럼 조사가 붙은 단어도 찾는다. |
+| `provide-request.json`, `provide-response.json` | 다른 프로그램이 명령으로 부를 때 주고받는 약속의 예. |
+
+`python3 scripts/build_demo.py`(또는 `pnpm demo:build`)가 생성 파일을 다시 만들고, 시험이 올려 둔 파일과 지금 코드가 만든 결과가 같은지 확인한다. DB는 볼트에서 다시 만들 수 있는 캐시이므로 실제 운영 중인 DB는 올리지 않고, 데모 볼트로 만든 DB만 올린다.
+
 ## 문서
 
 - [LLMS.md](LLMS.md): 작업 규칙, 할 일, 백로그. AI 도구가 먼저 읽는다.
