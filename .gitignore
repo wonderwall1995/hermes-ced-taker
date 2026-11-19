@@ -30,3 +30,6 @@ __pycache__/
 *.sqlite3
 *.sqlite-wal
 *.sqlite-shm
+
+# Demo database: built from the demo vault, holds no private data
+!examples/demo.db

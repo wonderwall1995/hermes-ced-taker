@@ -1,0 +1,16 @@
+diff --git a/src/report.py b/src/report.py
+index 1111111..2222222 100644
+--- a/src/report.py
++++ b/src/report.py
+@@ -10,4 +10,4 @@ def total_balance(accounts):
+     x = 1
+-    total = sum(a.balance for a in accounts)
++    total = sum(a.balance for a in accounts if a.balance > 0)
+     return total
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 3333333..4444444 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -1,2 +1,2 @@
+-balance: 1
++balance: 2
