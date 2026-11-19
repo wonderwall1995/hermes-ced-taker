@@ -3,6 +3,7 @@
 입구: 바뀐 줄(+, -)과 PR 설명에서 단어를 뽑는다. 락 파일, 최소화·소스맵, 스냅샷, 이진 파일은 제외한다.
 찾기: 컬럼명(=파일명)과 정확히 같은 단어만 문서를 고른다. 테이블 이름과 키워드는 찾는 데 쓰지 않는다.
 순위: 걸린 횟수가 많은 순. 동점이면 테이블.컬럼 위치가 글에 함께 나온 문서가 먼저, 그다음 이름순.
+제품: 참조 범위의 제품이 여럿이면 모든 제품에서 찾는다. 같은 컬럼명이 둘 이상의 제품에 걸리면 둘 다 보여 주고 경고한다.
 출구: 상위 N개는 본문 전체, 다음 M개는 한 줄 카드, 나머지는 개수만 알린다.
 놓침: 이름이 거의 같지만(대소문자, 밑줄 차이) 정확히 같지는 않은 단어는 DB에 기록만 한다.
 """
@@ -57,6 +58,7 @@ class Match:
     description_count: int
     pair_hit: bool
     locations: tuple  # 문서의 appearsIn (테이블.컬럼)
+    product: str = ""  # 이 문서가 속한 제품. 내부 이름표에만 쓰고 문서 글에는 넣지 않는다.
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,8 @@ class Explanation:
     cards: tuple  # 한 줄 카드로 넣은 문서 이름
     omitted: int  # 이름까지 생략한 문서 수
     matches: tuple = field(default=())  # 순위순 전체 결과
+    docs: tuple = field(default=())  # 다른 프로그램에 넘기는 모양: {id, title, text} 목록 (노트당 1개 + 요약 1개)
+    overlaps: tuple = field(default=())  # 둘 이상의 제품에 걸린 컬럼명 (의도와 벗어난 상태)
 
 
 # ---- 입구 ----
@@ -123,16 +127,42 @@ def _normalize(name):
 # ---- 찾기와 순위 ----
 
 
-def find_matches(db, product, diff_words, diff_pairs, desc_words, desc_pairs):
-    """컬럼명이 정확히 같은 문서를 찾아 순위순 Match 목록으로 돌려준다."""
-    found = db.find_usable(product, set(diff_words) | set(desc_words))
+def _as_list(products):
+    return [products] if isinstance(products, str) else list(products)
+
+
+def find_matches(db, products, diff_words, diff_pairs, desc_words, desc_pairs):
+    """컬럼명이 정확히 같은 문서를 모든 제품에서 찾아 순위순 Match 목록으로 돌려준다."""
+    names = set(diff_words) | set(desc_words)
     matches = []
-    for note in found:
-        locations = tuple(sorted(v for k, v in db.terms_of(product, note.name) if k == TERM_COLUMN_REF))
-        pair_hit = any(loc in diff_pairs or loc in desc_pairs for loc in locations)
-        matches.append(Match(note.name, diff_words.get(note.name, 0), desc_words.get(note.name, 0), pair_hit, locations))
-    matches.sort(key=lambda m: (-(m.diff_count + m.description_count), not m.pair_hit, m.name))
+    for product in _as_list(products):
+        for note in db.find_usable(product, names):
+            locations = tuple(sorted(v for k, v in db.terms_of(product, note.name) if k == TERM_COLUMN_REF))
+            pair_hit = any(loc in diff_pairs or loc in desc_pairs for loc in locations)
+            matches.append(Match(note.name, diff_words.get(note.name, 0), desc_words.get(note.name, 0),
+                                 pair_hit, locations, product))
+    matches.sort(key=lambda m: (-(m.diff_count + m.description_count), not m.pair_hit, m.name, m.product))
     return matches
+
+
+def overlapping_names(matches):
+    """둘 이상의 제품에 같은 이름의 문서가 걸린 컬럼명."""
+    seen = {}
+    for m in matches:
+        seen.setdefault(m.name, set()).add(m.product)
+    return tuple(sorted(name for name, owners in seen.items() if len(owners) > 1))
+
+
+OVERLAP_SHOWN = 5
+
+
+def overlap_notice(names):
+    """겹친 컬럼명이 있을 때 사람에게 알리는 한 줄. 없으면 None."""
+    if not names:
+        return None
+    shown = ", ".join(names[:OVERLAP_SHOWN])
+    more = f" 외 {len(names) - OVERLAP_SHOWN}개" if len(names) > OVERLAP_SHOWN else ""
+    return f"현재 의도와 벗어난 상태: 같은 컬럼명이 둘 이상의 제품에 있어 중첩된 컬럼 CED 문서가 있다 (컬럼: {shown}{more})."
 
 
 def near_misses(db, product, words):
@@ -187,7 +217,7 @@ def render(ranked, bodies, limits, notice=None):
         block = [f"### {m.name}", f"걸림: {_count_text(m)}"]
         if m.locations:
             block.append("위치: " + ", ".join(m.locations))
-        block.append(_quote(bodies[m.name]))
+        block.append(_quote(bodies[(m.product, m.name)]))
         out.append("\n".join(block))
     if cards:
         lines = ["### 요약 (본문 생략)"]
@@ -200,31 +230,75 @@ def render(ranked, bodies, limits, notice=None):
     return "\n\n".join(out) + "\n", tuple(m.name for m in full), tuple(m.name for m in cards), omitted
 
 
+# 다른 프로그램에 넘기는 문서의 이름표. 컬럼명이 summary여도 요약 문서와 겹치지 않게 접두어를 붙인다.
+NOTE_ID_PREFIX = "ced:"
+SUMMARY_ID = "ced-summary"
+TITLE_PREFIX = "CED 해설: "
+
+
+def build_docs(ranked, bodies, limits, qualify=False):
+    """순위순 Match 목록을 {id, title, text} 문서 목록으로 만든다. 줄이는 규칙은 render와 같다.
+
+    qualify가 참이면(참조 범위의 제품이 둘 이상) 내부 이름표(id)에 제품 이름을 넣는다. 제목과 글에는 넣지 않는다.
+    """
+    docs = []
+    for m in ranked[: limits.full]:
+        head = [f"걸림: {_count_text(m)}"]
+        if m.locations:
+            head.append("위치: " + ", ".join(m.locations))
+        text = "\n".join(head) + "\n\n" + bodies[(m.product, m.name)].rstrip("\n") + "\n"
+        doc_id = NOTE_ID_PREFIX + (f"{m.product}:" if qualify else "") + m.name
+        docs.append({"id": doc_id, "title": TITLE_PREFIX + m.name, "text": text})
+
+    cards = ranked[limits.full : limits.full + limits.cards]
+    omitted = len(ranked) - limits.full - len(cards)
+    lines = []
+    for m in cards:
+        lines.append(f"- {m.name}: " + (", ".join(m.locations) if m.locations else "위치 정보 없음"))
+    if omitted > 0:
+        lines.append(f"그 밖에 {omitted}개 문서도 걸렸으나 생략했다.")
+    if lines:
+        docs.append({"id": SUMMARY_ID, "title": TITLE_PREFIX + "요약 (본문 생략)", "text": "\n".join(lines) + "\n"})
+    return docs
+
+
 # ---- 진입점 ----
 
 
-def sync_notice(report):
-    """동기화 문제가 있었으면 해설에 붙일 한 줄을 돌려준다. 파일명은 쓰지 않고 개수만 쓴다."""
-    if report is None:
+def sync_notice(reports):
+    """동기화 문제가 있었으면 한 줄을 돌려준다. 보고서 하나 또는 여러 개를 받는다. 파일명은 쓰지 않고 개수만 쓴다."""
+    if reports is None:
         return None
-    if report.state_error:
+    if not isinstance(reports, (list, tuple)):
+        reports = [reports]
+    if any(r.state_error for r in reports):
         return "CED 동기화에 실패해 이전 내용을 사용함."
-    if report.issues:
-        return f"CED 일부를 최신 상태로 반영하지 못함 ({len(report.issues)}개). 해당 문서는 이전 내용이거나 빠져 있을 수 있음."
+    issues = sum(len(r.issues) for r in reports)
+    if issues:
+        return f"CED 일부를 최신 상태로 반영하지 못함 ({issues}개). 해당 문서는 이전 내용이거나 빠져 있을 수 있음."
     return None
 
 
-def explain(db, product, diff="", description="", limits=Limits(), notice=None, now=None, record_misses=True):
-    """diff와 PR 설명에서 해설 문단을 만든다."""
+def explain(db, products, diff="", description="", limits=Limits(), notice=None, now=None, record_misses=True):
+    """diff와 PR 설명에서 해설 문단을 만든다. products는 제품 하나(문자열) 또는 여러 개(목록)이다."""
+    products = _as_list(products)
     diff_words, diff_pairs = extract(changed_lines(diff, limits.excludes))
     desc_words, desc_pairs = extract(description.replace("\r\n", "\n").split("\n"))
 
     if record_misses:
-        pairs = near_misses(db, product, diff_words) + near_misses(db, product, desc_words)
-        if pairs:
-            db.record_misses(product, pairs, now or utc_now())
+        stamp = now or utc_now()
+        for product in products:
+            pairs = near_misses(db, product, diff_words) + near_misses(db, product, desc_words)
+            if pairs:
+                db.record_misses(product, pairs, stamp)
 
-    ranked = find_matches(db, product, diff_words, diff_pairs, desc_words, desc_pairs)
-    bodies = {n.name: n.body for n in db.find_usable(product, [m.name for m in ranked[: limits.full]])}
-    text, full, cards, omitted = render(ranked, bodies, limits, notice)
-    return Explanation(text, full, cards, omitted, tuple(ranked))
+    ranked = find_matches(db, products, diff_words, diff_pairs, desc_words, desc_pairs)
+    bodies = {}
+    for m in ranked[: limits.full]:
+        for note in db.find_usable(m.product, [m.name]):
+            bodies[(m.product, m.name)] = note.body
+    overlaps = overlapping_names(ranked)
+    notices = [n for n in (notice, overlap_notice(overlaps)) if n]
+    text, full, cards, omitted = render(ranked, bodies, limits, "\n주의: ".join(notices) or None)
+    docs = tuple(build_docs(ranked, bodies, limits, qualify=len(products) > 1))
+    return Explanation(text, full, cards, omitted, tuple(ranked), docs, overlaps)

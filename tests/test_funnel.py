@@ -2,7 +2,7 @@
 
 import unittest
 
-from ced_taker.funnel import Limits, changed_lines, explain, extract, sync_notice
+from ced_taker.funnel import Limits, changed_lines, explain, extract, overlap_notice, overlapping_names, sync_notice
 from ced_taker.parser import KeyNote
 from ced_taker.store import Store
 from ced_taker.sync import Issue, SyncReport
@@ -248,6 +248,23 @@ class TierTest(DbCase):
         self.assertEqual((result.full, result.cards, result.omitted), (("c1", "c2", "c3", "c4"), (), 0))
         self.assertNotIn("요약", result.text)
 
+    def test_docs_follow_the_same_three_tiers(self):
+        result = self.explain(self.diff, limits=Limits(full=1, cards=2))
+        self.assertEqual([d["id"] for d in result.docs], ["ced:c1", "ced-summary"])
+        full, summary = result.docs
+        self.assertIn("c1 의 설명", full["text"])
+        self.assertIn("- c2: t.c2", summary["text"])
+        self.assertIn("- c3: t.c3", summary["text"])
+        self.assertIn("그 밖에 1개 문서도 걸렸으나 생략했다.", summary["text"])
+        self.assertNotIn("c4", summary["text"])
+        self.assertNotIn("c2 의 설명", summary["text"])
+
+    def test_no_summary_document_when_everything_fits(self):
+        self.assertEqual([d["id"] for d in self.explain(self.diff).docs], ["ced:c1", "ced:c2", "ced:c3", "ced:c4"])
+
+    def test_no_match_no_docs(self):
+        self.assertEqual(self.explain("").docs, ())
+
     def test_card_without_locations(self):
         self.add("plain")
         result = self.explain(make_diff(("x.py", ["+plain"])), limits=Limits(full=0, cards=5))
@@ -342,6 +359,133 @@ class MissLogTest(DbCase):
         self.explain(make_diff(("a.py", ["+draftCol"])))
         self.assertEqual(self.db.misses("demo"), [])
 
+
+
+class MultiProductTest(DbCase):
+    """참조 범위의 제품이 여럿일 때. 기본은 모든 제품에서 찾는다."""
+
+    DIFF = make_diff(("x.py", ["+amount = cost + balance"]))
+
+    def setUp(self):
+        super().setUp()
+        self.add("amount", product="alpha", body="# amount\n\n알파의 금액")
+        self.add("cost", product="beta", body="# cost\n\n베타의 비용")
+
+    def run_explain(self, products, diff=None, **kw):
+        return explain(self.db, products, diff or self.DIFF, "", now=T1, **kw)
+
+    def test_documents_are_found_in_every_product(self):
+        result = self.run_explain(["alpha", "beta"])
+        self.assertEqual(sorted((m.product, m.name) for m in result.matches), [("alpha", "amount"), ("beta", "cost")])
+
+    def test_ids_carry_the_product_only_when_there_are_several(self):
+        self.assertEqual(sorted(d["id"] for d in self.run_explain(["alpha", "beta"]).docs),
+                         ["ced:alpha:amount", "ced:beta:cost"])
+        self.assertEqual([d["id"] for d in self.run_explain(["alpha"]).docs], ["ced:amount"])
+        self.assertEqual([d["id"] for d in self.run_explain("alpha").docs], ["ced:amount"])  # 문자열도 된다
+
+    def test_product_name_is_never_shown_in_the_title_or_the_header_of_a_document(self):
+        for doc in self.run_explain(["alpha", "beta"]).docs:
+            self.assertNotIn("alpha", doc["title"] + doc["text"].split("\n\n")[0])
+            self.assertNotIn("beta", doc["title"] + doc["text"].split("\n\n")[0])
+
+    def test_product_name_is_not_in_the_readable_text_either(self):
+        text = self.run_explain(["alpha", "beta"]).text
+        self.assertNotIn("alpha", text.replace("알파", ""))
+        self.assertNotIn("beta", text.replace("베타", ""))
+
+    def test_scope_limits_which_products_are_searched(self):
+        result = self.run_explain(["beta"])
+        self.assertEqual([(m.product, m.name) for m in result.matches], [("beta", "cost")])
+
+    def test_a_product_with_no_usable_notes_is_fine(self):
+        result = self.run_explain(["alpha", "empty_product"])
+        self.assertEqual([m.name for m in result.matches], ["amount"])
+
+    def test_no_overlap_means_no_warning(self):
+        result = self.run_explain(["alpha", "beta"])
+        self.assertEqual(result.overlaps, ())
+        self.assertNotIn("현재 의도와 벗어난 상태", result.text)
+
+    def test_same_column_in_two_products_shows_both_and_warns(self):
+        self.add("balance", product="alpha", body="# balance\n\n알파의 잔액", appears_in=("a_t.balance",))
+        self.add("balance", product="beta", body="# balance\n\n베타의 잔액", appears_in=("b_t.balance",))
+        result = self.run_explain(["alpha", "beta"])
+        balances = [d for d in result.docs if d["title"].endswith("balance")]
+        self.assertEqual(sorted(d["id"] for d in balances), ["ced:alpha:balance", "ced:beta:balance"])
+        self.assertEqual({d["title"] for d in balances}, {"CED 해설: balance"})  # 제목은 같다
+        by_id = {d["id"]: d["text"] for d in balances}
+        self.assertIn("알파의 잔액", by_id["ced:alpha:balance"])  # 각 문서에는 자기 제품의 설명만 들어 있다
+        self.assertNotIn("베타의 잔액", by_id["ced:alpha:balance"])
+        self.assertIn("베타의 잔액", by_id["ced:beta:balance"])
+        self.assertNotIn("알파의 잔액", by_id["ced:beta:balance"])
+        self.assertEqual(result.overlaps, ("balance",))
+        self.assertIn("주의: 현재 의도와 벗어난 상태", result.text)
+        self.assertIn("(컬럼: balance)", result.text)
+
+    def test_overlap_is_only_reported_for_columns_that_matched(self):
+        self.add("balance", product="alpha")
+        self.add("balance", product="beta")
+        result = self.run_explain(["alpha", "beta"], diff=make_diff(("x.py", ["+amount = 1"])))  # balance는 안 나옴
+        self.assertEqual(result.overlaps, ())
+
+    def test_the_three_tiers_work_across_products(self):
+        self.add("balance", product="alpha")
+        self.add("balance", product="beta")
+        diff = make_diff(("x.py", ["+balance balance balance amount amount cost"]))
+        result = self.run_explain(["alpha", "beta"], diff=diff, limits=Limits(full=1, cards=1))
+        self.assertEqual(len(result.docs), 2)  # 본문 1개 + 요약 1개
+        self.assertEqual(result.omitted, 2)
+        self.assertEqual(result.docs[0]["id"], "ced:alpha:balance")  # 횟수가 같으면 제품 이름순
+        self.assertEqual(result.docs[1]["id"], "ced-summary")
+
+    def test_ties_are_ordered_by_name_then_product(self):
+        self.add("balance", product="beta")
+        self.add("balance", product="alpha")
+        result = self.run_explain(["beta", "alpha"], diff=make_diff(("x.py", ["+balance"])))
+        self.assertEqual([(m.name, m.product) for m in result.matches], [("balance", "alpha"), ("balance", "beta")])
+
+    def test_near_misses_are_recorded_per_product(self):
+        self.add("account_balance", product="alpha")
+        self.run_explain(["alpha", "beta"], diff=make_diff(("x.py", ["+accountBalance = 1"])))
+        self.assertEqual(self.db.misses("alpha"), [("accountBalance", "account_balance", 1)])
+        self.assertEqual(self.db.misses("beta"), [])
+
+    def test_single_product_output_is_unchanged_by_the_multi_product_support(self):
+        one = self.run_explain(["alpha"])
+        self.assertEqual(one.docs[0]["id"], "ced:amount")
+        self.assertEqual(one.overlaps, ())
+
+
+class OverlapNoticeTest(unittest.TestCase):
+    def test_none_when_nothing_overlaps(self):
+        self.assertIsNone(overlap_notice(()))
+
+    def test_lists_a_few_names_then_counts_the_rest(self):
+        notice = overlap_notice(tuple(f"c{i}" for i in range(8)))
+        self.assertIn("(컬럼: c0, c1, c2, c3, c4 외 3개)", notice)
+
+    def test_overlapping_names_needs_two_different_products(self):
+        from ced_taker.funnel import Match
+
+        same = [Match("a", 1, 0, False, (), "p"), Match("a", 1, 0, False, (), "p")]
+        self.assertEqual(overlapping_names(same), ())
+        two = [Match("a", 1, 0, False, (), "p"), Match("a", 1, 0, False, (), "q"), Match("b", 1, 0, False, (), "p")]
+        self.assertEqual(overlapping_names(two), ("a",))
+
+
+class SyncNoticeManyTest(unittest.TestCase):
+    def test_accepts_a_list_and_adds_up_the_issues(self):
+        reports = [SyncReport("a", {}, (Issue("x.md", "mismatch"),)), SyncReport("b", {}, (Issue("y.md", "missing"), Issue("z.md", "missing")))]
+        self.assertIn("(3개)", sync_notice(reports))
+
+    def test_a_state_error_in_any_product_wins(self):
+        reports = [SyncReport("a", {}, (Issue("x.md", "mismatch"),)), SyncReport("b", {}, (), "state_bad_format")]
+        self.assertIn("실패", sync_notice(reports))
+
+    def test_empty_list_and_clean_reports_give_nothing(self):
+        self.assertIsNone(sync_notice([]))
+        self.assertIsNone(sync_notice([SyncReport("a", {}, ()), SyncReport("b", {}, ())]))
 
 if __name__ == "__main__":
     unittest.main()

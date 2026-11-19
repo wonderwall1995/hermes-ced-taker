@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""설치 없이 저장소 경로로 실행하는 진입점. 예: bin/ced-taker provide"""
+
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
+
+from ced_taker.cli import main  # noqa: E402
+
+sys.exit(main())

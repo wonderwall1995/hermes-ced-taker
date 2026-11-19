@@ -308,3 +308,32 @@ class Store:
             (product, name),
         )
         return [LogEntry(*r) for r in rows]
+
+
+def read_misses(path, product=None):
+    """DB를 읽기 전용으로 열어 놓침 기록을 돌려준다. DB나 표가 없으면 빈 목록이다.
+
+    DB를 새로 만들지 않고 내용을 바꾸지 않는다(읽기 전용 연결). 다만 WAL 모드의 DB를 읽으면 SQLite가 부속 파일(-wal, -shm)을
+    만들 수 있다. 이것은 정상이고 DB 본 파일은 바뀌지 않는다. 부속 파일을 만들지 않는 immutable 방식은 쓰지 않는다.
+    다른 프로세스가 동시에 쓰는 중이면 읽는 값이 어긋날 수 있기 때문이다.
+    행: (제품, 단어, 거의 같은 컬럼명, 횟수, 처음 본 시각, 마지막으로 본 시각). 횟수가 많은 순, 그다음 제품, 단어, 컬럼명 순이다.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return []
+    try:
+        query = "SELECT product, token, near_name, count, first_at, last_at FROM misses"
+        args = ()
+        if product is not None:
+            query += " WHERE product = ?"
+            args = (product,)
+        query += " ORDER BY count DESC, product, token, near_name"
+        return [tuple(r) for r in conn.execute(query, args)]
+    except sqlite3.Error:  # 표가 없는 옛 DB, 깨진 파일
+        return []
+    finally:
+        conn.close()
