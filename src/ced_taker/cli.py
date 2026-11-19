@@ -1,4 +1,4 @@
-"""명령줄. sync, explain, provide 세 명령이 있다.
+"""명령줄. sync, explain, provide, misses 네 명령이 있다.
 
 출력에는 제품 이름, 파일명, 결과 종류, 사유 코드만 쓴다. 경로는 쓰지 않는다.
 explain은 해설 문단을 출력하며, 거기에는 걸린 문서의 본문이 들어간다.
@@ -11,9 +11,10 @@ import sys
 from pathlib import Path
 
 from .config import ConfigError, default_db_path, resolve_vault
+from . import misses as misses_report
 from . import provider
 from .funnel import explain, sync_notice
-from .store import Store, StoreError
+from .store import Store, StoreError, read_misses
 from .sync import product_dir, sync_product, sync_vault
 
 _ORDER = ("new", "updated", "unchanged", "reactivated", "inactive")
@@ -53,6 +54,10 @@ def _build_parser():
     ex.add_argument("--diff", help="diff 파일 경로 (- 는 표준 입력)")
     ex.add_argument("--description", help="PR 설명 파일 경로 (- 는 표준 입력)")
     sub.add_parser("provide", help="참고 문서 공급자: 표준 입력의 JSON 요청에 JSON으로 답한다")
+    mi = sub.add_parser("misses", help="놓침 기록을 보여 준다 (읽기 전용. DB 내용을 바꾸지 않는다)")
+    mi.add_argument("--product", help="이 제품의 기록만 보여 준다 (기본: 모든 제품)")
+    mi.add_argument("--json", action="store_true", help="기계가 읽을 수 있는 JSON으로 출력한다")
+    mi.add_argument("--limit", type=int, default=misses_report.DEFAULT_LIMIT, help="횟수가 많은 쪽부터 이만큼만 보여 준다 (0이면 전부)")
     return parser
 
 
@@ -62,6 +67,8 @@ def main(argv=None, env=None, out=None, err=None, stdin=None):
 
     if args.command == "provide":
         return _run_provide(env, out, err, stdin)
+    if args.command == "misses":
+        return _run_misses(env, out, err, args)
 
     try:
         vault = resolve_vault(env)
@@ -124,4 +131,18 @@ def _run_provide(env, out, err, stdin):
         print(f"오류: {exc.reason}", file=err)
         return 1
     out.write(json.dumps(response, ensure_ascii=False) + "\n")
+    return 0
+
+
+
+def _run_misses(env, out, err, args):
+    """놓침 기록을 보여 준다. 볼트 설정이 필요 없고, DB가 없어도 오류가 아니다."""
+    if args.limit < 0:
+        print("오류: bad_limit", file=err)
+        return 1
+    rows = read_misses(default_db_path(env), args.product)
+    if args.json:
+        out.write(misses_report.to_json(rows, args.limit))
+    else:
+        out.write(misses_report.format_table(rows, args.product, args.limit))
     return 0
