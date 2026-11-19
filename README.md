@@ -44,7 +44,7 @@
 - 다른 프로그램이 명령으로 불러 쓸 수 있다. 표준 입력의 JSON 요청에 JSON으로 답하는 약속(참고 문서 공급자)을 지킨다. 어떤 프로그램이 부르는지는 모른다.
 
 **아직 안 되는 것**
-- 실제 환경에서의 연결. 약속과 부르는 쪽의 구현은 만들어 시험했지만, 설치와 설정과 실제 PR로의 시험은 하지 않았다. 방법과 확인되지 않은 점은 [설계 기록](docs/11-19-provider-design.md)에 있다.
+- 실제 환경에서의 연결. 부르는 쪽(hermes-controller)과 함께 시험했지만, 실제 PR로의 시험은 하지 않았다.
 - 한국어와 영어가 섞인 이름의 폭넓은 대응. 지금은 정확히 같은 이름만 찾는다.
 - 사람이 읽는 노트 쓰기.
 - 문서를 보내는 앱 쪽의 변경(목차 파일명 분리 등). 요청문은 만들었지만 아직 반영되지 않았다.
@@ -60,7 +60,7 @@
 | `schema.sql` | DB의 표 구조. 코드에서 만든 DB에서 읽어 낸 것이다. |
 | `sample.diff`, `sample-description.txt` | 입력의 예. 락 파일의 변경도 들어 있다. |
 | `explain-example.md` | 위 입력에서 만든 해설. 락 파일의 단어는 빠지고, "balance를"처럼 조사가 붙은 단어도 찾는다. |
-| `provide-request.json`, `provide-response.json` | 다른 프로그램이 명령으로 부를 때 주고받는 약속의 예. |
+| `provide-request.json`, `provide-response.json` | 다른 프로그램이 명령으로 부를 때 주고받는 약속의 예. [contracts/](contracts/)의 사본과 같다(원본은 hermes-controller). |
 
 `python3 scripts/build_demo.py`(또는 `pnpm demo:build`)가 생성 파일을 다시 만들고, 시험이 올려 둔 파일과 지금 코드가 만든 결과가 같은지 확인한다. DB는 볼트에서 다시 만들 수 있는 캐시이므로 실제 운영 중인 DB는 올리지 않고, 데모 볼트로 만든 DB만 올린다.
 
@@ -68,7 +68,7 @@
 
 - [LLMS.md](LLMS.md): 작업 규칙, 할 일, 백로그. AI 도구가 먼저 읽는다.
 - [docs/11-18-setup.md](docs/11-18-setup.md): 설계를 정한 과정. 어떤 선택지가 있었고 왜 골랐는지, 되돌리는 방법을 적었다.
-- [docs/11-19-provider-design.md](docs/11-19-provider-design.md): 다른 프로젝트와 잇는 방법. 약속(계약) 명세, 결정 기록, 발견한 문제, 되돌리는 방법을 적었다.
+- [contracts/](contracts/): 다른 프로젝트와 주고받는 JSON 모양(provide 요청과 응답)의 사본.
 
 ## 공개 저장소 원칙
 

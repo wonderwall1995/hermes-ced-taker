@@ -1,7 +1,7 @@
 """참고 문서 공급자 계약의 공급자 쪽.
 
 다른 프로그램이 명령으로 이 프로그램을 실행하고, 표준 입력으로 JSON을 주면, 표준 출력으로 JSON을 돌려준다.
-호출하는 쪽이 누구인지 모른다. 계약은 docs/11-19-provider-design.md 에 있다.
+호출하는 쪽이 누구인지 모른다. 약속의 예는 contracts/ 에 있다(원본은 hermes-controller).
 
 요청: {"version": 1, "repo": "owner/name", "title": "...", "description": "...", "diff": "..."}
 응답: {"version": 1, "docs": [{"id", "title", "text"}], "notices": ["..."]}
