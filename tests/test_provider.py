@@ -13,7 +13,7 @@ from ced_taker import cli, provider
 from ced_taker.config import ConfigError
 from ced_taker.provider import ProviderError, parse_request
 from tests.test_funnel import make_diff
-from tests.test_sync import VaultCase, key_doc
+from tests.test_sync import VaultCase, key_doc, sha
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 T1 = "2026-01-01T00:00:00Z"
@@ -86,6 +86,18 @@ class ProviderCase(VaultCase):
     def write_config(self, data):
         self.cfg.write_text(json.dumps(data), encoding="utf-8")
 
+    def add_product(self, name, files):
+        """볼트에 제품 폴더를 하나 더 만든다. files는 {파일명: 문서 텍스트}."""
+        folder = self.vault / "CED" / name
+        folder.mkdir(parents=True, exist_ok=True)
+        hashes = {}
+        for filename, text in files.items():
+            data = text.encode("utf-8")
+            (folder / filename).write_bytes(data)
+            hashes[filename] = sha(data)
+        (folder / ".ced-state.json").write_text(json.dumps({"version": 1, "files": hashes}), encoding="utf-8")
+        return folder
+
     def provide(self, **kw):
         return provider.provide(parse_request(request(**kw)), env=self.env, now=T1, sleep=lambda s: None)
 
@@ -154,30 +166,106 @@ class ProvideTest(ProviderCase):
         self.assertEqual(len(self.provide(repo="ACME/Shop", diff=make_diff(("a.py", ["+amount"])))["docs"]), 1)
 
 
-class UnmappedRepoTest(ProviderCase):
-    def test_unmapped_repo_is_an_empty_answer_and_touches_nothing(self):
-        # 볼트는 알려 주지 않고, DB 위치는 임시 경로로 준다. 만들어지면 DB를 열었다는 뜻이다.
-        env = {"CED_TAKER_CONFIG": str(self.cfg), "CED_TAKER_DB": str(self.db_path)}
-        got = provider.provide(parse_request(request(repo="acme/other")), env=env)
-        self.assertEqual(got, {"version": 1, "docs": [], "notices": []})
-        self.assertFalse(self.db_path.exists())
-        self.assertEqual(list(self.db_path.parent.glob("*.db*")), [])
+class DefaultIsEveryProductTest(ProviderCase):
+    """기본은 모든 저장소가 모든 CED 제품을 참조한다. repos는 제한용이다."""
 
-    def test_no_config_file_at_all_is_an_empty_answer(self):
-        env = {"CED_TAKER_CONFIG": str(self.cfg.parent / "nope.json"), "CED_TAKER_DB": str(self.db_path)}
-        self.assertEqual(provider.provide(parse_request(request()), env=env)["docs"], [])
-        self.assertFalse(self.db_path.exists())
+    DIFF = make_diff(("a.py", ["+amount = cost"]))
+
+    def setUp(self):
+        super().setUp()
+        self.put("amount.md", key_doc(body="제품 데모의 금액"))
+        self.write_state()
+        self.add_product("other", {"cost.md": key_doc(product="other", body="제품 other의 비용")})
+
+    def ids(self, **kw):
+        return sorted(d["id"] for d in self.provide(**kw)["docs"])
+
+    def test_a_repo_that_is_not_listed_sees_every_product(self):
+        self.assertEqual(self.ids(repo="acme/other", diff=self.DIFF), ["ced:demo:amount", "ced:other:cost"])
+
+    def test_no_repos_setting_at_all_also_means_every_product(self):
+        self.write_config({})
+        self.assertEqual(self.ids(diff=self.DIFF), ["ced:demo:amount", "ced:other:cost"])
+
+    def test_a_listed_repo_is_limited_to_its_products(self):
+        self.write_config({"repos": {"acme/shop": "demo"}})
+        self.assertEqual(self.ids(diff=self.DIFF), ["ced:amount"])
+
+    def test_the_limit_may_be_a_list(self):
+        self.write_config({"repos": {"acme/shop": ["demo", "other"]}})
+        self.assertEqual(self.ids(diff=self.DIFF), ["ced:demo:amount", "ced:other:cost"])
+
+    def test_limit_to_another_product(self):
+        self.write_config({"repos": {"acme/shop": ["other"]}})
+        self.assertEqual(self.ids(diff=self.DIFF), ["ced:cost"])
+
+    def test_ids_carry_the_product_only_when_there_are_several_in_scope(self):
+        self.write_config({"repos": {"acme/shop": "demo"}})
+        self.assertEqual(self.ids(diff=self.DIFF), ["ced:amount"])  # 범위가 제품 하나
+        self.write_config({})
+        self.assertEqual(self.ids(diff=self.DIFF), ["ced:demo:amount", "ced:other:cost"])  # 범위가 둘
+
+    def test_a_limited_product_without_a_folder_gives_a_notice_and_the_rest_still_work(self):
+        self.write_config({"repos": {"acme/shop": ["demo", "gone"]}})
+        got = self.provide(diff=self.DIFF)
+        self.assertEqual([d["id"] for d in got["docs"]], ["ced:amount"])
+        self.assertIn(provider.NO_PRODUCT_FOLDER_NOTICE, got["notices"])
+
+    def test_same_column_in_two_products_shows_both_and_warns_in_the_notices(self):
+        self.add_product("third", {"amount.md": key_doc(product="third", body="제품 third의 금액")})
+        got = self.provide(repo="acme/other", diff=make_diff(("a.py", ["+amount = 1"])))  # 제한 없는 저장소
+        self.assertEqual(sorted(d["id"] for d in got["docs"]), ["ced:demo:amount", "ced:third:amount"])
+        (notice,) = got["notices"]
+        self.assertIn("현재 의도와 벗어난 상태", notice)
+        self.assertIn("(컬럼: amount)", notice)
+
+    def test_product_names_stay_out_of_titles_and_headers(self):
+        self.add_product("third", {"amount.md": key_doc(product="third", body="제품 third의 금액")})
+        for doc in self.provide(repo="acme/other", diff=make_diff(("a.py", ["+amount = 1"])))["docs"]:
+            header = doc["title"] + doc["text"].split("\n\n")[0]
+            for product in ("demo", "third", "other"):
+                self.assertNotIn(product, header)
+
+    def test_empty_vault_gives_a_notice_not_an_error(self):
+        import shutil
+
+        shutil.rmtree(self.vault / "CED")
+        (self.vault / "CED").mkdir()
+        self.assertEqual(self.provide(repo="acme/other", diff=self.DIFF),
+                         {"version": 1, "docs": [], "notices": [provider.NO_PRODUCTS_NOTICE]})
+        # 제한된 저장소는 다른 안내를 받는다: 설정에 적힌 제품의 폴더가 없다.
+        self.assertEqual(self.provide(diff=self.DIFF)["notices"], [provider.NO_PRODUCT_FOLDER_NOTICE])
+
+    def test_a_repo_with_no_matching_words_gets_nothing_and_no_warning(self):
+        self.assertEqual(self.provide(repo="acme/other", diff=make_diff(("a.py", ["+unrelated = 1"]))),
+                         {"version": 1, "docs": [], "notices": []})
+
+
+class ErrorTest(ProviderCase):
+    def test_a_missing_vault_setting_is_an_error_for_every_repo_even_unlisted_ones(self):
+        env = {"CED_TAKER_CONFIG": str(self.cfg), "CED_TAKER_DB": str(self.db_path)}
+        for repo in ("acme/shop", "acme/other"):
+            with self.subTest(repo=repo):
+                with self.assertRaises(ConfigError) as ctx:
+                    provider.provide(parse_request(request(repo=repo)), env=env)
+                self.assertEqual(ctx.exception.reason, "vault_not_configured")
+
+    def test_a_vault_folder_that_does_not_exist_is_an_error(self):
+        env = dict(self.env, CED_TAKER_VAULT=str(self.vault / "nope"))
+        with self.assertRaises(ConfigError) as ctx:
+            provider.provide(parse_request(request()), env=env)
+        self.assertEqual(ctx.exception.reason, "vault_not_found")
 
     def test_broken_config_is_an_error(self):
         self.cfg.write_text("{", encoding="utf-8")
         with self.assertRaises(ConfigError):
             provider.provide(parse_request(request()), env=self.env)
 
-    def test_mapped_repo_with_missing_vault_is_an_error(self):
-        env = dict(self.env, CED_TAKER_VAULT=str(self.vault / "nope"))
+    def test_a_malformed_limit_is_an_error(self):
+        self.write_config({"repos": {"acme/other": []}})
         with self.assertRaises(ConfigError) as ctx:
-            provider.provide(parse_request(request()), env=env)
-        self.assertEqual(ctx.exception.reason, "vault_not_found")
+            provider.provide(parse_request(request()), env=self.env)
+        self.assertEqual(ctx.exception.reason, "config_unreadable")
 
 
 class ProvideCommandTest(ProviderCase):
@@ -234,9 +322,19 @@ class LauncherTest(ProviderCase):
         self.assertEqual(got["docs"][0]["id"], "ced:amount")
         self.assertIn("실행 파일 시험", got["docs"][0]["text"])
 
-    def test_unmapped_repo_through_the_launcher(self):
-        done = self.run_launcher(request(repo="acme/other"))
-        self.assertEqual((done.returncode, json.loads(done.stdout)["docs"]), (0, []))
+    def test_a_repo_without_a_limit_sees_every_product_through_the_launcher(self):
+        self.put("amount.md", key_doc(body="실행 파일 시험"))
+        self.write_state()
+        done = self.run_launcher(request(repo="acme/other", diff=make_diff(("a.py", ["+amount = 1"]))))
+        self.assertEqual((done.returncode, done.stderr), (0, ""))
+        self.assertEqual([d["id"] for d in json.loads(done.stdout)["docs"]], ["ced:amount"])
+
+    def test_missing_vault_setting_through_the_launcher(self):
+        env_less = {"CED_TAKER_CONFIG": str(self.cfg), "PATH": os.environ.get("PATH", "")}
+        with tempfile.TemporaryDirectory() as elsewhere:
+            done = subprocess.run([sys.executable, str(REPO_ROOT / "bin" / "ced-taker"), "provide"], input=request(repo="acme/other"),
+                                  capture_output=True, text=True, cwd=elsewhere, env=env_less, timeout=30)
+        self.assertEqual((done.returncode, done.stdout, done.stderr.strip()), (1, "", "오류: vault_not_configured"))
 
     def test_bad_request_through_the_launcher(self):
         done = self.run_launcher("nope")

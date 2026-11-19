@@ -73,7 +73,7 @@ def build_examples(examples_dir=EXAMPLES, work_dir=None, now=FIXED_NOW):
 
         # 공급자 계약의 요청과 응답. 설정은 임시 파일로 만들고 환경 변수로 가리킨다.
         config = work / "config.json"
-        config.write_text(json.dumps({"vault": str(vault), "repos": {DEMO_REPO: DEMO_PRODUCT}}), encoding="utf-8")
+        config.write_text(json.dumps({"vault": str(vault)}), encoding="utf-8")  # repos 제한 없이: 기본은 모든 제품
         request = {"version": 1, "repo": DEMO_REPO, "title": "합계 로직 수정", "description": description.strip(), "diff": diff}
         env = {"CED_TAKER_CONFIG": str(config), "CED_TAKER_DB": str(work / "provide.db"), "HERMES_HOME": str(work / "home")}
         response = provide(parse_request(json.dumps(request)), env=env, now=now)
