@@ -21,3 +21,12 @@ build/
 # Python cache
 __pycache__/
 *.pyc
+
+# Local databases (they hold document bodies)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
