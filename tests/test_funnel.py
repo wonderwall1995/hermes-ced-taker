@@ -248,6 +248,23 @@ class TierTest(DbCase):
         self.assertEqual((result.full, result.cards, result.omitted), (("c1", "c2", "c3", "c4"), (), 0))
         self.assertNotIn("요약", result.text)
 
+    def test_docs_follow_the_same_three_tiers(self):
+        result = self.explain(self.diff, limits=Limits(full=1, cards=2))
+        self.assertEqual([d["id"] for d in result.docs], ["ced:c1", "ced-summary"])
+        full, summary = result.docs
+        self.assertIn("c1 의 설명", full["text"])
+        self.assertIn("- c2: t.c2", summary["text"])
+        self.assertIn("- c3: t.c3", summary["text"])
+        self.assertIn("그 밖에 1개 문서도 걸렸으나 생략했다.", summary["text"])
+        self.assertNotIn("c4", summary["text"])
+        self.assertNotIn("c2 의 설명", summary["text"])
+
+    def test_no_summary_document_when_everything_fits(self):
+        self.assertEqual([d["id"] for d in self.explain(self.diff).docs], ["ced:c1", "ced:c2", "ced:c3", "ced:c4"])
+
+    def test_no_match_no_docs(self):
+        self.assertEqual(self.explain("").docs, ())
+
     def test_card_without_locations(self):
         self.add("plain")
         result = self.explain(make_diff(("x.py", ["+plain"])), limits=Limits(full=0, cards=5))

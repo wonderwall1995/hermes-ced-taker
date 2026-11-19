@@ -66,6 +66,7 @@ class Explanation:
     cards: tuple  # 한 줄 카드로 넣은 문서 이름
     omitted: int  # 이름까지 생략한 문서 수
     matches: tuple = field(default=())  # 순위순 전체 결과
+    docs: tuple = field(default=())  # 다른 프로그램에 넘기는 모양: {id, title, text} 목록 (노트당 1개 + 요약 1개)
 
 
 # ---- 입구 ----
@@ -200,6 +201,34 @@ def render(ranked, bodies, limits, notice=None):
     return "\n\n".join(out) + "\n", tuple(m.name for m in full), tuple(m.name for m in cards), omitted
 
 
+# 다른 프로그램에 넘기는 문서의 이름표. 컬럼명이 summary여도 요약 문서와 겹치지 않게 접두어를 붙인다.
+NOTE_ID_PREFIX = "ced:"
+SUMMARY_ID = "ced-summary"
+TITLE_PREFIX = "CED 해설: "
+
+
+def build_docs(ranked, bodies, limits):
+    """순위순 Match 목록을 {id, title, text} 문서 목록으로 만든다. 줄이는 규칙은 render와 같다."""
+    docs = []
+    for m in ranked[: limits.full]:
+        head = [f"걸림: {_count_text(m)}"]
+        if m.locations:
+            head.append("위치: " + ", ".join(m.locations))
+        text = "\n".join(head) + "\n\n" + bodies[m.name].rstrip("\n") + "\n"
+        docs.append({"id": NOTE_ID_PREFIX + m.name, "title": TITLE_PREFIX + m.name, "text": text})
+
+    cards = ranked[limits.full : limits.full + limits.cards]
+    omitted = len(ranked) - limits.full - len(cards)
+    lines = []
+    for m in cards:
+        lines.append(f"- {m.name}: " + (", ".join(m.locations) if m.locations else "위치 정보 없음"))
+    if omitted > 0:
+        lines.append(f"그 밖에 {omitted}개 문서도 걸렸으나 생략했다.")
+    if lines:
+        docs.append({"id": SUMMARY_ID, "title": TITLE_PREFIX + "요약 (본문 생략)", "text": "\n".join(lines) + "\n"})
+    return docs
+
+
 # ---- 진입점 ----
 
 
@@ -227,4 +256,5 @@ def explain(db, product, diff="", description="", limits=Limits(), notice=None, 
     ranked = find_matches(db, product, diff_words, diff_pairs, desc_words, desc_pairs)
     bodies = {n.name: n.body for n in db.find_usable(product, [m.name for m in ranked[: limits.full]])}
     text, full, cards, omitted = render(ranked, bodies, limits, notice)
-    return Explanation(text, full, cards, omitted, tuple(ranked))
+    docs = tuple(build_docs(ranked, bodies, limits))
+    return Explanation(text, full, cards, omitted, tuple(ranked), docs)

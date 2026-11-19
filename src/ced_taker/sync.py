@@ -113,6 +113,14 @@ def _store_match(db, product, name, item, now, counts, issues):
     issues.append(Issue(item.name, PARSE_ERROR, reason))
 
 
+def product_dir(vault, product):
+    """제품 폴더를 돌려준다. 이름이 안전하지 않거나 폴더가 없으면 None."""
+    if not isinstance(product, str) or not product or "/" in product or "\\" in product or product.startswith("."):
+        return None
+    path = Path(vault) / "CED" / product
+    return path if path.is_dir() else None
+
+
 def sync_vault(db, vault, now=None, sleep=time.sleep):
     """볼트의 CED 폴더에 있는 모든 제품을 동기화한다."""
     return [sync_product(db, p, now, sleep) for p in scan_products(Path(vault) / "CED")]
