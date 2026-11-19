@@ -67,7 +67,6 @@
 ## 문서
 
 - [LLMS.md](LLMS.md): 작업 규칙, 할 일, 백로그. AI 도구가 먼저 읽는다.
-- [docs/11-18-setup.md](docs/11-18-setup.md): 설계를 정한 과정. 어떤 선택지가 있었고 왜 골랐는지, 되돌리는 방법을 적었다.
 - [contracts/](contracts/): 다른 프로젝트와 주고받는 JSON 모양(provide 요청과 응답)의 사본.
 
 ## 공개 저장소 원칙
