@@ -1,3 +1,74 @@
+# 헤르메스 - 테스트 게이트
+
+Hermes Agent - Claude Code 연동, 테스트 문서 생성 자동화 & 테스트 문서 평가 자동화
+
+이 프로젝트는 저장소 세 개로 나뉘어 있습니다. 이 README는 세 저장소에 같이 쓸 수 있도록 전체를 설명합니다.
+
+| 구분 | 링크 |
+|---|---|
+| hermes-ced-taker Repo | https://github.com/wonderwall1995/hermes-ced-taker |
+| hermes-controller Repo | https://github.com/wonderwall1995/hermes-controller |
+| hermes-test-gate Repo | https://github.com/wonderwall1995/hermes-test-gate |
+| 함께 쓰는 GitHub App | https://github.com/wonderwall1995/github-app |
+| 이력서 | https://resume-hwk.ltwayne0.workers.dev/main |
+
+<!-- 실행 방법, 기술 스택, 폴더 구조 같은 안내는 이 아래에 직접 채운다. 저장소마다 이 README를 넣을 때는 해당 저장소 줄에 "(이 저장소)"를 붙인다. -->
+
+## 문제 프레임
+
+QA 리드로 발탁된 직후 세운 첫 목표는 **팀원의 성과를 상향 평준화하는 것**이었습니다.
+배포된 Test Checklist 생성 프로세스가 Legacy가 된 상황이었고, 로컬 LLM 사용에 따른 실효성이 떨어졌기에, **사람이 진행한 테스트를 고성능 LLM이 평가할 수 있도록 해보는 것**이 목표가 되어 진행했던 프로젝트였습니다.
+큰 원동력은 Hermes가 실제 '오케스트레이터 및 웹훅' 역할이 가능하다는 점.
+Hermes 내부의 Claude Code 활용이 API 종량제 호출 외 사용이 가능하다는 점이 있었습니다.
+
+## 설계
+
+### ced-taker
+
+후에 소개될 **프로젝트④**에서 User 개인이 작성한 **Context Enrichment Docs(이하 CED)**를
+Hermes - Obsidian Vault 측에 구축하고, 이것을 분석 전 **'참조 문서'**로 제공합니다.
+재직 중 Legacy가 된 Test Checklist 생성 자동화는 '테스트의 경중을 모른다.', '맥락을 모른다.'
+두 개의 큰 이슈가 있었고, **큰 프로젝트에서 자동 생성된 문서는 신뢰가 불가능한 단순 참조 문서였습니다.**
+ced taker로 하여금 **이런 이슈를 해결**합니다.
+Test에 필요한 맥락 문서를 LLM에게 줄 수 있는 캐시 저장, 전송 역할로 설계되었습니다.
+
+(프로젝트④: DBViewer-tagger, https://github.com/wonderwall1995/dbviewer-tagger)
+
+### controller
+
+Hermes 내부의 **프로젝트들이 서로를 몰라야 한다는 의도로 만들어진 중간 허브(hub)**입니다.
+에이전트 내부의 프로젝트들을 잇고, **프로젝트가 서로 독립성을 갖게끔 만드는 의도**입니다.
+향후 API 테스트 코드를 자동으로 생성하게끔 맡겨 본다든가 하는 구상이 있습니다.
+ced-taker와 test-gate가 다른 프로젝트에서 인용될 수 있게 미리 만들어둔 중간 다리 프로젝트입니다.
+
+### test-gate
+
+github-app이 가져온 Diff를 분석합니다. Claude Code를 호출하는 기능이 있습니다.
+GitHub의 Pull Request 측 코멘트를 기억하고, 작성하고, 수정하는 역할을 겸하고 있습니다.
+테스트에 대한 보고서 / 테스트 커버리지 충족 여부에 대한 조언, 그와 같은 내용을 HTML로도 제공하고 있습니다.
+
+## 아쉬운 점
+
+이전 재직 중이던 회사에서 기획하고 구현을 앞두고 있었으나, 퇴사를 결정하면서 생긴 문제는
+실제로 본 프로젝트가 얼마나 효용 가치를 지녔는지 정성적인 성과, 정량적인 평가가 없다는 점입니다.
+**다수의 User 대상으로 라이브 서비스 중인 제품 대상으로 적용해본 적이 없다는 점**이 가장 아쉽습니다.
+
+## 회고 (KPT)
+
+### Keep
+- Hermes를 오케스트레이터, 파이프라인으로 사용하는 점에서 넓은 활용성을 기대하게 되었습니다.
+- 복잡도 높을 제품 대상으로 바로 시험을 해볼 수 있을 프로젝트를 완결한 점이 흡족스럽습니다.
+
+### Problem
+1. 퇴사 이슈 외적으로, 반증과 ROI 같은 성과 계측이 있었다면 좋았겠다는 생각을 하게 됩니다.
+2. 일반적인 Test Checklist 자동화 생성과 크게 거리를 둘 수 있는 프로젝트인지는 스스로 의문입니다.
+
+### Try
+- 테스트 코드 생성의 공장화 같은 추가적인 프로젝트를 만들 수도 있겠단 기대가 듭니다.
+- 개인의 니즈 기반 서비스 구현을 Hermes 환경 하에 진행해보는 시도를 꾸준히 해보고자 합니다.
+
+---
+
 # hermes-ced-taker
 
 사람이 확인해 적어 둔 **DB 컬럼의 뜻**을, 코드와 PR만 봐서는 알 수 없는 용어를 해석해야 하는 AI 에이전트가 쓸 수 있게 하는 공통 계층이다.
